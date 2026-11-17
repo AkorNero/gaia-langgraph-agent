@@ -1,0 +1,55 @@
+[project]
+name = "agent-course"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.1.0",
+    "langchain-community>=0.4.2",
+    "langchain-core>=1.7.6",
+    "langchain-google-genai>=4.4.3",
+    "langchain-huggingface>=1.2.3",
+    "langchain-openai>=1.7.4",
+    "langchain-tavily>=0.2.18",
+    "langfuse>=5.2.0",
+    "langgraph>=1.2.20",
+    "lxml>=6.1.3",
+    "openpyxl>=3.1.5",
+    "pandas>=3.1.1",
+    "pydantic>=2.14.3",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "tabulate>=0.10.0",
+    "wikipedia>=1.4.0",
+    "youtube-transcript-api>=1.2.5",
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 2
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E", "W",  # pycodestyle: style errors and whitespace
+  "F",       # pyflakes: unused imports/variables, undefined names
+  "I",       # isort: import sorting (replaces your isort dependency)
+  "B",       # bugbear: likely bugs, e.g. mutable default arguments
+  "UP",      # pyupgrade: modern syntax for 3.12 (list[] instead of List[], etc.)
+  "SIM",     # simplify: needlessly complex if/else, with, bool expressions
+  "C4",      # comprehensions: unnecessary list()/dict() calls
+  "RUF",     # Ruff's own rules
+  "PL",      # pylint: repeated comparisons, too many branches, etc.
+]
+ignore = [
+  "E501",    # long lines: the formatter handles code, and long prompt strings are fine
+  "PLR2004", # magic numbers: noisy in scripts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"agent.py" = ["E402"]   # imports placed after load_dotenv() on purpose
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ty.rules]
+possibly-unresolved-reference = "error"
