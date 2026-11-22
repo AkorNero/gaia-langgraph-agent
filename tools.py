@@ -2,7 +2,9 @@
 
 import base64
 import mimetypes
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -237,27 +239,57 @@ def read_file(file_path: str) -> str | list[dict]:
     return path.read_text()
 
 
+RUN_TIMEOUT = 30  # wall-clock seconds
+
+
+# Runs inside the child before the LLM's code. Soft and hard limits are both set,
+# and an unprivileged process can't raise a hard limit, so the code can't undo them.
+# (Done here rather than with preexec_fn, which can deadlock in threaded callers.)
+_RUN_PRELUDE = """\
+import resource, sys
+resource.setrlimit(resource.RLIMIT_CPU, (20, 20))                # CPU seconds
+resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))       # 2 GiB memory
+resource.setrlimit(resource.RLIMIT_FSIZE, (50 << 20, 50 << 20))  # 50 MB per file
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))                 # no core dumps
+_code = sys.argv.pop(1)
+exec(compile(_code, "<code>", "exec"), {"__name__": "__main__"})
+"""
+
+
 @tool
 def run_python(code: str) -> str:
     """
     Run Python code and return stdout and stderr.
     Use print() to show results. Pandas and standard library are available.
     """
+    # Not a sandbox: the code can still read files and use the network.
+    # This only keeps secrets out of the child and caps its resources.
     with tempfile.TemporaryDirectory() as tmp:
+        env = {
+            "PATH": "/usr/bin:/bin",  # no API keys from .env reach the child
+            "HOME": tmp,
+            "OMP_NUM_THREADS": "1",  # keep numpy/pandas inside the memory cap
+            "OPENBLAS_NUM_THREADS": "1",
+        }
+        proc = subprocess.Popen(
+            # -I: ignore PYTHON* vars and user site-packages
+            [sys.executable, "-I", "-c", _RUN_PRELUDE, code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmp,
+            env=env,
+            start_new_session=True,  # own process group, so a timeout kills children too
+        )
         try:
-            res = subprocess.run(
-                [sys.executable, "-c", code],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=tmp,
-            )
+            stdout, stderr = proc.communicate(timeout=RUN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            return "ERROR: timeout after 30s"
-    out = res.stdout[-5000:]
-    if res.returncode != 0:
-        out += f"\nERROR (exit {res.returncode}):\n{res.stderr[-3000:]}"
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            return f"ERROR: timeout after {RUN_TIMEOUT}s"
+    out = stdout[-5000:]
+    if proc.returncode != 0:
+        out += f"\nERROR (exit {proc.returncode}):\n{stderr[-3000:]}"
     return out or "No output. Use print()."
 
 

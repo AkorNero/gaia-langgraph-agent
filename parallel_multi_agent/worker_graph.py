@@ -1,24 +1,13 @@
+"""Worker subgraph: runs one plan step with the agent that fits its task type."""
+
 import base64
 import mimetypes
-from typing import Annotated, Literal, cast
+from pathlib import Path
+from typing import Literal
 
-from dotenv import load_dotenv
-from langchain_core.messages import (
-    AIMessage,
-    AnyMessage,
-    HumanMessage,
-)
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-
-# from langchain_openai import ChatOpenAI
-from langfuse.model import ChatMessageDict
-
-# from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.messages import AnyMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from pydantic import BaseModel, Field
 
 from tools import (
     fetch_page,
@@ -33,111 +22,9 @@ from tools import (
     wikipedia_tables,
 )
 
-load_dotenv()
-
-from langfuse import Langfuse, propagate_attributes
-from langfuse.langchain import CallbackHandler
-from langfuse.span_filter import is_default_export_span
-
-NOISE_SPANS = {"__start__", "tools_condition", "route_agent", "ChatPromptTemplate"}
-
-
-def should_export(span) -> bool:
-    return is_default_export_span(span) and span.name not in NOISE_SPANS
-
-
-# Initialize Langfuse client
-# langfuse = get_client()
-langfuse = Langfuse(should_export_span=should_export)
-
-llm_gemini = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=0)
-
-# llm_openai = ChatOpenAI(model="gpt-6-luna", temperature=0)
-
-
-TaskType = Literal["search", "file", "code", "reason"]
-FileType = Literal["none", "image", "audio", "python", "excel", "other"]
-Verdict = Literal["correct", "incorrect", "partial"]
-
-EXT_TO_TYPE: dict[str, FileType] = {
-    ".png": "image",
-    ".jpg": "image",
-    ".mp3": "audio",
-    ".py": "python",
-    ".xlsx": "excel",
-}
-
-
-class Step(BaseModel):
-    id: int
-    task_type: TaskType
-    instruction: str
-    depends_on: list[int] | None = None
-
-
-class Plan(BaseModel):
-    plan: str
-    steps: list[Step]
-
-
-class StepResult(BaseModel):
-    step_id: int
-    output: str
-
-
-def results_reducer(
-    old: list[StepResult], new: list[StepResult] | None
-) -> list[StepResult]:
-    if new is None:
-        return []
-    return old + new
-
-
-class WorkerOutput(BaseModel):
-    # When you add a compiled subgraph as a node, LangGraph copies only the keys that both states have back to the main state.
-    step_results: Annotated[list[StepResult], results_reducer] = Field(
-        default_factory=list
-    )
-
-
-class WorkerState(WorkerOutput):
-    step: Step
-    question: str
-    file_path: str | None = None
-    file_type: FileType | None = Field(default="none")
-    context: str | None = None  # results of depends_on
-    messages: Annotated[list[AnyMessage], add_messages] = Field(default_factory=list)
-
-
-class Check(BaseModel):
-    verdict: Verdict
-    feedback: str
-
-
-class AgentState(BaseModel):
-    # input
-    task_id: str
-    question: str
-    file_path: str | None = None
-    file_type: FileType | None = Field(default="none")
-
-    # control
-    plan: Plan | None = None
-    steps: list[Step] = Field(default_factory=list)
-    verdict: Verdict | None = None
-    feedback: str | None = None
-    retries: int = Field(default=0)
-    max_retries: int = Field(default=2, lt=5)
-
-    # work
-    step_results: Annotated[list[StepResult], results_reducer] = Field(
-        default_factory=list
-    )
-
-    # output
-    draft_answer: str | None = None
-    answer: str | None = None
-
+from .config import llm_gemini
+from .data_models import StepResult, WorkerOutput, WorkerState
+from .prompts import step_prompt
 
 SEARCH_TOOLS = [
     search_web,
@@ -150,35 +37,9 @@ SEARCH_TOOLS = [
 FILE_TOOLS = [transcribe_audio, read_excel, read_file]
 CODE_TOOLS = [run_python]
 
-planner_llm = llm_gemini.with_structured_output(Plan)
-verifier_llm = llm_gemini.with_structured_output(Check)
-
 search_llm = llm_gemini.bind_tools(SEARCH_TOOLS)
 file_llm = llm_gemini.bind_tools(FILE_TOOLS)
 code_llm = llm_gemini.bind_tools(CODE_TOOLS)
-
-STEP_FALLBACK = cast(
-    list[ChatMessageDict],
-    [
-        {
-            "role": "system",
-            "content": "You do one step of a bigger task.\nFull question: {{question}}",
-        },
-        {
-            "role": "user",
-            "content": "Your step: {{instruction}}\n{{context}}{{file}}Do only your step. When done, reply with the step result only.",
-        },
-        {"type": "placeholder", "name": "messages"},
-    ],
-)
-
-lf_step_prompt = langfuse.get_prompt(
-    "worker-sub-graph/step", type="chat", fallback=STEP_FALLBACK
-)
-step_prompt = ChatPromptTemplate(
-    lf_step_prompt.get_langchain_prompt(),
-    metadata={"langfuse_prompt": lf_step_prompt},
-)
 
 search_chain = step_prompt | search_llm
 file_chain = step_prompt | file_llm
@@ -287,44 +148,22 @@ worker.add_edge("finalize", END)
 worker_graph = worker.compile(name="step-agent")
 
 
-def planner(state: AgentState) -> dict:
-    prompt = f"Question: {state.question}" + (
-        f"\nFile given with the above question: \n\t- File type: {state.file_type}.\n\t- File path: {state.file_path}"
-        if state.file_type != "none"
-        else ""
-    )
-    if state.feedback is not None:
-        prompt += "Last try failed: " + state.feedback
-
-    res = cast(Plan, planner_llm.invoke(prompt))
-
-    mod_res = [
-        f"\n\t- Task Type: {i.task_type}\n\t\t- Instruction: {i.instruction}"
-        for i in res.steps
-    ]
-
-    return {
-        "plan": res,
-        "messages": [
-            HumanMessage(content=state.question),
-            AIMessage(content="Steps:\n" + "".join(mod_res)),
-        ],
-    }
-
-
-flow = StateGraph(AgentState)
-flow.add_node("planner", planner)
-flow.add_edge(START, "planner")
-flow.add_edge("planner", END)
-
 if __name__ == "__main__":
+    from langfuse import propagate_attributes
+    from langfuse.langchain import CallbackHandler
+
+    from .config import langfuse
+    from .data_models import Step
+
     # Verify connection
     if langfuse.auth_check():
         print("Langfuse client is authenticated and ready!")
     else:
         print("Authentication failed. Please check your credentials and host.")
 
-    worker_graph.get_graph().draw_mermaid_png(output_file_path="worker.png")
+    worker_graph.get_graph().draw_mermaid_png(
+        output_file_path=str(Path(__file__).with_name("worker.png"))
+    )
 
     question = "How many studio albums did Mercedes Sosa publish from 2000 to 2009?"
     step = Step(
@@ -362,18 +201,3 @@ if __name__ == "__main__":
         root.update(output=answer)  # clean output
         print(out)
     langfuse.flush()
-
-    # app = flow.compile(checkpointer=checkpointer)
-
-    # config = {"configurable": {"thread_id": "customer_123"}}
-
-    # result = app.invoke(
-    #   AgentState(
-    #     task_id="dadsdsw1",
-    #     question="Actor who played Ray in Polish Raymond → role in Magda M.?",
-    #     max_retries=2
-    #   ),
-    #   config
-    # )
-
-    # print(result)

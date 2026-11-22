@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"agent.py" = ["E402"]   # imports placed after load_dotenv() on purpose
+"parallel_multi_agent/config.py" = ["E402"]   # imports placed after load_dotenv() on purpose
 
 [[tool.ty.overrides]]
 include = ["src"]

@@ -4,7 +4,7 @@ A planner–worker agent built with LangGraph to answer questions from the [GAIA
 
 It is a work in progress. The tools and the worker subgraph run end to end. The planner exists, but the dispatcher, verifier and answer formatter that connect everything are still being built (see [How it can be improved](#how-it-can-be-improved)).
 
-![Worker subgraph](worker.png)
+![Worker subgraph](parallel_multi_agent/worker.png)
 
 ## Technologies
 
@@ -88,7 +88,7 @@ Then run:
 
 ```bash
 uv run tools.py   # smoke-tests every tool (needs the GAIA files already downloaded locally)
-uv run agent.py   # runs the worker on a sample question, prints the answer and redraws worker.png
+uv run python -m parallel_multi_agent.worker_graph   # runs the worker on a sample question, prints the answer and redraws worker.png
 ```
 
-`agent.py` uses the `worker-sub-graph/step` prompt from Langfuse if it exists and falls back to the prompt in the code if it doesn't.
+`parallel_multi_agent/prompts.py` uses the `worker-sub-graph/step` prompt from Langfuse if it exists and falls back to the prompt in the code if it doesn't.
