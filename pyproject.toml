@@ -23,33 +23,11 @@ dependencies = [
     "youtube-transcript-api>=1.2.5",
 ]
 
-[tool.ruff]
-line-length = 88
-indent-width = 2
-target-version = "py312"
-
-[tool.ruff.lint]
-select = [
-  "E", "W",  # pycodestyle: style errors and whitespace
-  "F",       # pyflakes: unused imports/variables, undefined names
-  "I",       # isort: import sorting (replaces your isort dependency)
-  "B",       # bugbear: likely bugs, e.g. mutable default arguments
-  "UP",      # pyupgrade: modern syntax for 3.12 (list[] instead of List[], etc.)
-  "SIM",     # simplify: needlessly complex if/else, with, bool expressions
-  "C4",      # comprehensions: unnecessary list()/dict() calls
-  "RUF",     # Ruff's own rules
-  "PL",      # pylint: repeated comparisons, too many branches, etc.
-]
-ignore = [
-  "E501",    # long lines: the formatter handles code, and long prompt strings are fine
-  "PLR2004", # magic numbers: noisy in scripts
-]
-
 [tool.ruff.lint.per-file-ignores]
 "agent.py" = ["E402"]   # imports placed after load_dotenv() on purpose
 
-[tool.ruff.format]
-docstring-code-format = true
+[[tool.ty.overrides]]
+include = ["src"]
 
-[tool.ty.rules]
-possibly-unresolved-reference = "error"
+[tool.ty.overrides.analysis]
+return-type-inference = "never"
