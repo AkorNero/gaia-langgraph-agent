@@ -1,10 +1,27 @@
-"""Pure text/table helpers: cleaning, headings, filtering, slicing. No I/O, no state."""
+"""Text/table helpers (cleaning, headings, filtering, slicing) and the
+run_python runners (Docker sandbox, local fallback)."""
 
+import functools
+import os
 import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import uuid
 
 import pandas as pd
 
-from variables import CITATION, MD_HEADER_RE, PREVIEW_CHARS, WIKI_HEADER_RE
+from variables import (
+    CITATION,
+    MD_HEADER_RE,
+    PREVIEW_CHARS,
+    RUN_TIMEOUT,
+    SANDBOX_DATA_DIRS,
+    SANDBOX_IMAGE,
+    WIKI_HEADER_RE,
+)
 
 
 def header(line: str) -> tuple[int, str] | None:
@@ -122,3 +139,100 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
     df = df.loc[:, ~df.columns.duplicated()]
     return df.replace(CITATION, "", regex=True)
+
+
+# --- run_python runners ------------------------------------------------------
+# Each runner returns (exit code, stdout, stderr), or an error string on timeout.
+RunResult = tuple[int, str, str] | str
+
+
+@functools.cache
+def docker_available() -> bool:
+    """True if the docker CLI exists, the daemon answers and the sandbox image is
+    built. Checked once per process."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        for cmd in (["docker", "info"], ["docker", "image", "inspect", SANDBOX_IMAGE]):
+            subprocess.run(cmd, capture_output=True, check=True, timeout=10)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return True
+
+
+def run_in_docker(code: str, timeout: int = RUN_TIMEOUT) -> RunResult:
+    """Run code in a throwaway container: no network, no host files except the
+    data dirs (read-only), capped memory/CPU/processes, unprivileged user."""
+    name = f"run-python-{uuid.uuid4().hex[:12]}"
+    mounts = [arg for d in SANDBOX_DATA_DIRS for arg in ("-v", f"{d}:{d}:ro")]
+    cmd = [
+        "docker", "run", "--rm", "-i", "--name", name,
+        "--network", "none",
+        "--memory", "2g", "--memory-swap", "2g",
+        "--cpus", "1", "--pids-limit", "128",
+        "--read-only", "--tmpfs", "/tmp:rw,size=64m",
+        "--workdir", "/tmp",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--user", "65534:65534",
+        "-e", "HOME=/tmp", "-e", "OMP_NUM_THREADS=1", "-e", "OPENBLAS_NUM_THREADS=1",
+        *mounts,
+        SANDBOX_IMAGE, "python", "-I", "-",  # code is read from stdin
+    ]  # fmt: skip
+    try:
+        p = subprocess.run(
+            cmd,
+            input=code,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # Killing the docker CLI leaves the container running: kill it by name.
+        subprocess.run(["docker", "kill", name], capture_output=True, check=False)
+        return f"ERROR: timeout after {timeout}s"
+    return p.returncode, p.stdout, p.stderr
+
+
+# Runs inside the child before the LLM's code. Soft and hard limits are both set,
+# and an unprivileged process can't raise a hard limit, so the code can't undo them.
+# (Done here rather than with preexec_fn, which can deadlock in threaded callers.)
+_RUN_PRELUDE = """\
+import resource, sys
+resource.setrlimit(resource.RLIMIT_CPU, (20, 20))                # CPU seconds
+resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))       # 2 GiB memory
+resource.setrlimit(resource.RLIMIT_FSIZE, (50 << 20, 50 << 20))  # 50 MB per file
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))                 # no core dumps
+_code = sys.argv.pop(1)
+exec(compile(_code, "<code>", "exec"), {"__name__": "__main__"})
+"""
+
+
+def run_local(code: str, timeout: int = RUN_TIMEOUT) -> RunResult:
+    """Fallback when Docker is missing. Not a sandbox: the code can still read
+    files and use the network. This only keeps secrets out of the child and caps
+    its resources."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {
+            "PATH": "/usr/bin:/bin",  # no API keys from .env reach the child
+            "HOME": tmp,
+            "OMP_NUM_THREADS": "1",  # keep numpy/pandas inside the memory cap
+            "OPENBLAS_NUM_THREADS": "1",
+        }
+        proc = subprocess.Popen(
+            # -I: ignore PYTHON* vars and user site-packages
+            [sys.executable, "-I", "-c", _RUN_PRELUDE, code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmp,
+            env=env,
+            start_new_session=True,  # own process group, so a timeout kills children too
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            return f"ERROR: timeout after {timeout}s"
+    return proc.returncode, stdout, stderr

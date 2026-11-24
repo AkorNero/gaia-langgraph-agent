@@ -141,10 +141,6 @@ worker.add_edge("code_tools", "code_agent")
 worker.add_edge("reason_agent", "finalize")
 worker.add_edge("finalize", END)
 
-# checkpointer = InMemorySaver()
-
-# worker_graph = worker.compile(name="step-agent", checkpointer=checkpointer)
-
 worker_graph = worker.compile(name="step-agent")
 
 
@@ -170,6 +166,7 @@ if __name__ == "__main__":
         id=1,
         task_type="search",
         instruction="Find the studio albums of Mercedes Sosa from 2000 to 2009",
+        depends_on=[],
     )
 
     with (

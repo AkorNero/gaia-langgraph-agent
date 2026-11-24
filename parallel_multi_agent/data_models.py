@@ -23,7 +23,11 @@ class Step(BaseModel):
     id: int
     task_type: TaskType
     instruction: str
-    depends_on: list[int] | None = None
+    depends_on: list[int] = Field(
+        description="IDs of earlier steps whose results this step needs. "
+        "Use [] only if the step can run without any other step's result; "
+        "steps with [] run in parallel."
+    )
 
 
 class Plan(BaseModel):
@@ -74,11 +78,11 @@ class AgentState(BaseModel):
 
     # control
     plan: Plan | None = None
-    steps: list[Step] = Field(default_factory=list)
     verdict: Verdict | None = None
     feedback: str | None = None
     retries: int = Field(default=0)
     max_retries: int = Field(default=2, lt=5)
+    messages: Annotated[list[AnyMessage], add_messages] = Field(default_factory=list)
 
     # work
     step_results: Annotated[list[StepResult], results_reducer] = Field(

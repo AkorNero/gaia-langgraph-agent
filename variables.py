@@ -1,5 +1,6 @@
 """Settings, limits and shared clients used by the tools."""
 
+import os
 import re
 
 import wikipedia
@@ -30,3 +31,18 @@ STORE_MAX_ENTRY_CHARS = 500_000
 CITATION = r"\[(?:\d+|[a-z]|note \d+|citation needed|nb \d+)\]"
 WIKI_HEADER_RE = re.compile(r"^(=+)\s*(.+?)\s*\1$")
 MD_HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$")
+
+# --- run_python sandbox -------------------------------------------------------
+RUN_TIMEOUT = 30  # wall-clock seconds per run
+SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "agent-sandbox")  # see sandbox.Dockerfile
+# Host dirs mounted read-only at the same path in the container, so file paths
+# given to the agent work unchanged. The whole HF hub cache is mounted because
+# dataset snapshot files are symlinks into its blobs/ folder.
+SANDBOX_DATA_DIRS = [
+    d
+    for d in os.getenv(
+        "SANDBOX_DATA_DIRS",
+        os.getenv("HF_HUB_CACHE", os.path.expanduser("~/.cache/huggingface/hub")),
+    ).split(os.pathsep)
+    if d and os.path.isdir(d)
+]

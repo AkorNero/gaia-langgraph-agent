@@ -25,9 +25,19 @@ dependencies = [
 
 [tool.ruff.lint.per-file-ignores]
 "parallel_multi_agent/config.py" = ["E402"]   # imports placed after load_dotenv() on purpose
+"parallel_multi_agent/main_graph.py" = ["F841"]   # imports placed after load_dotenv() on purpose
 
 [[tool.ty.overrides]]
 include = ["src"]
 
 [tool.ty.overrides.analysis]
 return-type-inference = "never"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

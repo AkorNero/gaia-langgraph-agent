@@ -2,12 +2,7 @@
 
 import base64
 import mimetypes
-import os
 import re
-import signal
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -17,9 +12,12 @@ from wikipedia.exceptions import DisambiguationError, PageError
 from youtube_transcript_api import YouTubeTranscriptApi
 
 from helper import (
+    docker_available,
     keyword_lines,
     outline,
     prose_preview,
+    run_in_docker,
+    run_local,
     section_text,
     sections,
     slice_with_note,
@@ -239,57 +237,20 @@ def read_file(file_path: str) -> str | list[dict]:
     return path.read_text()
 
 
-RUN_TIMEOUT = 30  # wall-clock seconds
-
-
-# Runs inside the child before the LLM's code. Soft and hard limits are both set,
-# and an unprivileged process can't raise a hard limit, so the code can't undo them.
-# (Done here rather than with preexec_fn, which can deadlock in threaded callers.)
-_RUN_PRELUDE = """\
-import resource, sys
-resource.setrlimit(resource.RLIMIT_CPU, (20, 20))                # CPU seconds
-resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))       # 2 GiB memory
-resource.setrlimit(resource.RLIMIT_FSIZE, (50 << 20, 50 << 20))  # 50 MB per file
-resource.setrlimit(resource.RLIMIT_CORE, (0, 0))                 # no core dumps
-_code = sys.argv.pop(1)
-exec(compile(_code, "<code>", "exec"), {"__name__": "__main__"})
-"""
-
-
 @tool
 def run_python(code: str) -> str:
     """
     Run Python code and return stdout and stderr.
     Use print() to show results. Pandas and standard library are available.
+    No internet access. Attached files can be read (not written) at the path given.
     """
-    # Not a sandbox: the code can still read files and use the network.
-    # This only keeps secrets out of the child and caps its resources.
-    with tempfile.TemporaryDirectory() as tmp:
-        env = {
-            "PATH": "/usr/bin:/bin",  # no API keys from .env reach the child
-            "HOME": tmp,
-            "OMP_NUM_THREADS": "1",  # keep numpy/pandas inside the memory cap
-            "OPENBLAS_NUM_THREADS": "1",
-        }
-        proc = subprocess.Popen(
-            # -I: ignore PYTHON* vars and user site-packages
-            [sys.executable, "-I", "-c", _RUN_PRELUDE, code],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=tmp,
-            env=env,
-            start_new_session=True,  # own process group, so a timeout kills children too
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=RUN_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            return f"ERROR: timeout after {RUN_TIMEOUT}s"
+    result = run_in_docker(code) if docker_available() else run_local(code)
+    if isinstance(result, str):  # timeout
+        return result
+    returncode, stdout, stderr = result
     out = stdout[-5000:]
-    if proc.returncode != 0:
-        out += f"\nERROR (exit {proc.returncode}):\n{stderr[-3000:]}"
+    if returncode != 0:
+        out += f"\nERROR (exit {returncode}):\n{stderr[-3000:]}"
     return out or "No output. Use print()."
 
 
