@@ -1,6 +1,12 @@
 """Environment, Langfuse client and the shared LLM."""
 
+import os
+
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+
+if not os.getenv("SKIP_DOTENV"):
+    load_dotenv()
 
 load_dotenv()
 
@@ -66,5 +72,4 @@ class GraphCallbackHandler(CallbackHandler):
 langfuse = Langfuse(should_export_span=should_export)
 
 llm_gemini = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=0)
-
-# llm_openai = ChatOpenAI(model="gpt-6-luna", temperature=0)
+llm_openai = ChatOpenAI(model="gpt-6-luna", temperature=0)

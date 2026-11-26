@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from .config import GraphCallbackHandler, langfuse, llm_gemini
+from .config import GraphCallbackHandler, langfuse, llm_gemini, llm_openai
 from .data_models import AgentState, Check, Plan, WorkerState
 from .prompts import (
     formatter_prompt,
@@ -18,7 +18,7 @@ from .prompts import (
 from .worker_graph import worker_graph
 
 planner_llm = llm_gemini.with_structured_output(Plan)
-verifier_llm = llm_gemini.with_structured_output(Check)
+verifier_llm = llm_openai.with_structured_output(Check)
 
 planner_chain = planner_prompt | planner_llm
 verifier_chain = verifier_prompt | verifier_llm
@@ -93,7 +93,7 @@ def dispatcher(state: AgentState) -> list[Send] | Literal["verifier"]:
                 step=item,
                 context="\n---\n".join(
                     f"Step {r.step_id}: {r.output}"
-                    for r in sorted(state.step_results, key=lambda r: r.step_id)
+                    for r in state.step_results
                     if r.step_id in item.depends_on
                 )
                 or None,
@@ -105,7 +105,7 @@ def dispatcher(state: AgentState) -> list[Send] | Literal["verifier"]:
 
 def verifier(state: AgentState) -> dict:
     assert state.plan is not None, "verifier ran before planner"
-    results = sorted(state.step_results, key=lambda r: r.step_id)
+    results = state.step_results
     steps = {s.id: s for s in state.plan.steps}
     draft = results[-1].output if results else ""
     res = cast(
@@ -169,7 +169,7 @@ flow.add_edge("formatter", END)
 app = flow.compile(name="gaia-agent", checkpointer=InMemorySaver())
 
 
-def run(state: AgentState, session_id: str = "dev") -> dict:
+def run(state: AgentState, session_id: str = "dev-parallel-main-graph") -> dict:
     """Answer one question with a Langfuse trace: one trace per task, grouped by session."""
     with (
         langfuse.start_as_current_observation(
@@ -187,7 +187,9 @@ def run(state: AgentState, session_id: str = "dev") -> dict:
         result = app.invoke(
             state,
             config={
-                "callbacks": [GraphCallbackHandler()],  # passed down to workers and subgraph
+                "callbacks": [
+                    GraphCallbackHandler()
+                ],  # passed down to workers and subgraph
                 "configurable": {"thread_id": state.task_id},
                 "recursion_limit": 50,
             },

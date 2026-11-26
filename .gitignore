@@ -7,3 +7,5 @@ __pycache__/
 data.csv
 
 .ruff_cache
+
+.langgraph_api

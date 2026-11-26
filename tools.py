@@ -9,7 +9,6 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 from wikipedia.exceptions import DisambiguationError, PageError
-from youtube_transcript_api import YouTubeTranscriptApi
 
 from helper import (
     docker_available,
@@ -25,13 +24,15 @@ from helper import (
 from memory import (
     STORE,
     cached_fetch_page,
+    cached_transcription,
     cached_web_search,
     cached_wiki_page,
     cached_wiki_search,
     cached_wiki_tables,
+    cached_youtube_transcript,
     stash,
 )
-from variables import PREVIEW_CHARS, READ_CHARS, SNIPPET_CHARS, client
+from variables import PREVIEW_CHARS, READ_CHARS, SNIPPET_CHARS
 
 
 @tool
@@ -186,12 +187,10 @@ def get_youtube_transcript(video_id: str) -> str:
     https://www.youtube.com/watch?v=1htKBjuUWec. Not the full URL.
     """
     try:
-        data = YouTubeTranscriptApi().fetch(video_id=video_id).to_raw_data()
+        text = cached_youtube_transcript(video_id)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: no transcript available ({type(e).__name__})"
-    return stash(
-        f"yt:{video_id}", " ".join(s["text"] for s in data), preview=READ_CHARS
-    )
+    return stash(f"yt:{video_id}", text, preview=READ_CHARS)
 
 
 @tool
@@ -199,9 +198,7 @@ def transcribe_audio(file_path: str) -> str:
     """
     Use this tool to transcribe a audio file
     """
-    with open(file_path, "rb") as f:
-        transcript = client.audio.transcriptions.create(model="whisper-1", file=f)
-        return transcript.text
+    return cached_transcription(file_path)
 
 
 @tool

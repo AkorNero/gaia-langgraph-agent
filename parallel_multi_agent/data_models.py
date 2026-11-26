@@ -45,7 +45,7 @@ def results_reducer(
 ) -> list[StepResult]:
     if new is None:
         return []
-    return old + new
+    return sorted(old + new, key=lambda s: s.step_id)
 
 
 class WorkerOutput(BaseModel):

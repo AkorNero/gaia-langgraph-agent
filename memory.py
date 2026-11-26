@@ -13,6 +13,7 @@ from io import StringIO
 import pandas as pd
 import requests
 from wikipedia import page, search
+from youtube_transcript_api import YouTubeTranscriptApi
 
 from helper import clean_markdown, clean_table, slice_with_note
 from variables import (
@@ -20,6 +21,7 @@ from variables import (
     PREVIEW_CHARS,
     STORE_MAX_ENTRY_CHARS,
     STORE_MAX_TOTAL_CHARS,
+    client,
     web_extract,
     web_search,
 )
@@ -119,3 +121,17 @@ def cached_fetch_page(url: str) -> tuple[str, str]:
         raise RuntimeError(f"could not fetch {url}: {str(failed)[:200]}")
     r = res["results"][0]
     return r.get("title") or url, clean_markdown(r.get("raw_content") or "")
+
+
+@lru_cache(maxsize=32)
+def cached_youtube_transcript(video_id: str) -> str:
+    """Full transcript text of a YouTube video."""
+    data = YouTubeTranscriptApi().fetch(video_id=video_id).to_raw_data()
+    return " ".join(s["text"] for s in data)
+
+
+@lru_cache(maxsize=32)
+def cached_transcription(file_path: str) -> str:
+    """Whisper transcript of an audio file. Cached: every call costs money and time."""
+    with open(file_path, "rb") as f:
+        return client.audio.transcriptions.create(model="whisper-1", file=f).text

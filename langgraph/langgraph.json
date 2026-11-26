@@ -1,0 +1,8 @@
+{
+  "dependencies": [".."],
+  "graphs": {
+    "gaia-agent": "./orch-worker-agent.py:graph",
+    "step-agent": "./orch-worker-agent.py:worker"
+  },
+  "env": ".env"
+}

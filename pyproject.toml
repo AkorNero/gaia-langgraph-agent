@@ -35,6 +35,7 @@ return-type-inference = "never"
 
 [dependency-groups]
 dev = [
+    "langgraph-cli[inmem]>=0.4.43",
     "pytest>=9.2.0",
 ]
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from langchain_core.messages import AnyMessage, HumanMessage
+from langfuse import propagate_attributes
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -22,7 +23,7 @@ from tools import (
     wikipedia_tables,
 )
 
-from .config import llm_gemini
+from .config import GraphCallbackHandler, langfuse, llm_gemini
 from .data_models import StepResult, WorkerOutput, WorkerState
 from .prompts import step_prompt
 
@@ -34,8 +35,15 @@ SEARCH_TOOLS = [
     read_stored,
     get_youtube_transcript,
 ]
-FILE_TOOLS = [transcribe_audio, read_excel, read_file]
-CODE_TOOLS = [run_python]
+FILE_TOOLS = [
+    transcribe_audio,
+    read_excel,
+    read_file,
+    search_web,
+    fetch_page,
+    read_stored,
+]
+CODE_TOOLS = [run_python, search_web, fetch_page, read_stored]
 
 search_llm = llm_gemini.bind_tools(SEARCH_TOOLS)
 file_llm = llm_gemini.bind_tools(FILE_TOOLS)
@@ -144,57 +152,50 @@ worker.add_edge("finalize", END)
 worker_graph = worker.compile(name="step-agent")
 
 
+def run(state: WorkerState, session_id: str = "dev-parallel-worker-graph") -> dict:
+    """Run one plan step on its own with a Langfuse trace, for testing a worker."""
+    with (
+        langfuse.start_as_current_observation(
+            as_type="agent",
+            name="worker-step",
+            input={"question": state.question, "step": state.step.instruction},
+            metadata={"step_id": state.step.id, "task_type": state.step.task_type},
+        ) as root,
+        propagate_attributes(
+            session_id=session_id,
+            tags=["langgraph", "worker-sub-graph"],
+        ),
+    ):
+        result = worker_graph.invoke(
+            state,
+            config={
+                "callbacks": [GraphCallbackHandler()],
+                "recursion_limit": 25,
+            },
+        )
+        root.update(output=[r.output for r in result["step_results"]])
+    return result
+
+
 if __name__ == "__main__":
-    from langfuse import propagate_attributes
-    from langfuse.langchain import CallbackHandler
-
-    from .config import langfuse
     from .data_models import Step
-
-    # Verify connection
-    if langfuse.auth_check():
-        print("Langfuse client is authenticated and ready!")
-    else:
-        print("Authentication failed. Please check your credentials and host.")
 
     worker_graph.get_graph().draw_mermaid_png(
         output_file_path=str(Path(__file__).with_name("worker.png"))
     )
 
-    question = "How many studio albums did Mercedes Sosa publish from 2000 to 2009?"
-    step = Step(
-        id=1,
-        task_type="search",
-        instruction="Find the studio albums of Mercedes Sosa from 2000 to 2009",
-        depends_on=[],
-    )
-
-    with (
-        langfuse.start_as_current_observation(
-            as_type="agent",  # this is an agent run
-            name="test-worker-step",
-            input={"question": question, "step": step.instruction},
-            metadata={"step_id": step.id, "task_type": step.task_type},
-        ) as root,
-        propagate_attributes(
-            # trace_name="test-worker-step", # trace name is inherited from the observation name
-            session_id="test-session",
-            tags=["langgraph", "worker-sub-graph"],
-        ) as p,
-    ):
-        # Initialize Langfuse CallbackHandler for Langchain (tracing)
-        langfuse_handler = CallbackHandler()
-
-        out = worker_graph.invoke(
-            WorkerState(step=step, question=question),
-            config={
-                "callbacks": [langfuse_handler],
-                # "configurable": {
-                #   "thread_id": "test"
-                # }
-            },
+    try:
+        out = run(
+            WorkerState(
+                question="How many studio albums did Mercedes Sosa publish from 2000 to 2009?",
+                step=Step(
+                    id=1,
+                    task_type="search",
+                    instruction="Find the studio albums of Mercedes Sosa from 2000 to 2009",
+                    depends_on=[],
+                ),
+            )
         )
-        answer = out["step_results"]
-        root.update(output=answer)  # clean output
-        print(out)
-    langfuse.flush()
+        print(out["step_results"])
+    finally:
+        langfuse.flush()  # send buffered spans before the process exits
