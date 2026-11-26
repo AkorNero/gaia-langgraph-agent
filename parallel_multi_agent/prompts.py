@@ -70,7 +70,10 @@ PLANNER_FALLBACK = cast(
                 "- If one step can find the answer on its own, the plan is just that one step.\n"
                 "- If a file is attached, plan a file step to read it (or a code step for "
                 "a Python file or for calculations on a table). Do not search for its contents.\n"
-                "- Do not plan a search for something the question itself already gives.\n\n"
+                "- Do not plan a search for something the question itself already gives.\n"
+                "- If facts are listed as already established, do not plan steps to find them "
+                "again: every worker is given them. Plan only what is still missing, and still "
+                "end with an answer step (it can be the only step if the facts are enough).\n\n"
                 "In plan, write one or two sentences on the approach."
             ),
         },
@@ -115,7 +118,12 @@ VERIFIER_FALLBACK = cast(
                 "Otherwise say which step went wrong and why, what is still unknown, "
                 "and what to do differently next time: another source, another tool, "
                 "an extra check or a different split of the work. "
-                "Be specific and short. Do not give the answer yourself."
+                "Be specific and short. Do not give the answer yourself.\n\n"
+                "In good_steps, list the ids of steps whose results are correct and useful, "
+                "even when the draft is wrong. They are kept as known facts, so the next "
+                "attempt does not redo them. Only list results you are confident in; "
+                "leave out failed, vague or unchecked ones. Known facts from earlier "
+                "attempts are already kept: do not list them."
             ),
         },
         {

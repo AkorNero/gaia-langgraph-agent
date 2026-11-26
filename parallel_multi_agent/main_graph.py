@@ -25,6 +25,10 @@ verifier_chain = verifier_prompt | verifier_llm
 formatter_chain = formatter_prompt | llm_gemini
 
 
+def format_facts(facts: list[str]) -> str:
+    return "\n".join(f"- {f}" for f in facts) + "\n"
+
+
 def planner(state: AgentState) -> dict:
     previous = ""
     if state.feedback and state.plan:
@@ -37,6 +41,12 @@ def planner(state: AgentState) -> dict:
             f"Last plan: {state.plan.plan}\n{old_steps}\n"
             f"Draft answer it gave: {state.draft_answer}\n"
             f"Verifier feedback: {state.feedback}\n"
+        )
+    if state.known_facts:
+        previous += (
+            "\nAlready established in earlier attempts (do not plan steps to find "
+            "these again; every worker is given them):\n"
+            + format_facts(state.known_facts)
         )
 
     prompt_vars = {
@@ -69,6 +79,20 @@ def planner(state: AgentState) -> dict:
     }
 
 
+def build_context(state: AgentState, depends_on: list[int]) -> str | None:
+    parts = []
+    if state.known_facts:
+        parts.append(
+            "Known facts from earlier attempts:\n" + format_facts(state.known_facts)
+        )
+    parts += [
+        f"Step {r.step_id}: {r.output}"
+        for r in state.step_results
+        if r.step_id in depends_on
+    ]
+    return "\n---\n".join(parts) or None
+
+
 def dispatcher(state: AgentState) -> list[Send] | Literal["verifier"]:
     done = {r.step_id for r in state.step_results}
     if not (state.plan):
@@ -91,12 +115,7 @@ def dispatcher(state: AgentState) -> list[Send] | Literal["verifier"]:
                 file_type=state.file_type,
                 file_path=state.file_path,
                 step=item,
-                context="\n---\n".join(
-                    f"Step {r.step_id}: {r.output}"
-                    for r in state.step_results
-                    if r.step_id in item.depends_on
-                )
-                or None,
+                context=build_context(state, item.depends_on),
             ),
         )
         for item in ready
@@ -117,7 +136,14 @@ def verifier(state: AgentState) -> dict:
                 if state.file_type != "none"
                 else "",
                 "plan": state.plan.plan,
-                "step_results": "\n".join(
+                "step_results": (
+                    "Known facts from earlier attempts:\n"
+                    + format_facts(state.known_facts)
+                    + "\n"
+                    if state.known_facts
+                    else ""
+                )
+                + "\n".join(
                     f"Step {r.step_id} ({steps[r.step_id].task_type}: {steps[r.step_id].instruction}):\n{r.output}"
                     for r in results
                 ),
@@ -125,7 +151,16 @@ def verifier(state: AgentState) -> dict:
             }
         ),
     )
-    update = {"draft_answer": draft, "verdict": res.verdict, "feedback": res.feedback}
+    update = {
+        "draft_answer": draft,
+        "verdict": res.verdict,
+        "feedback": res.feedback,
+        "known_facts": [
+            f"{steps[r.step_id].instruction} → {r.output}"
+            for r in results
+            if r.step_id in res.good_steps
+        ],
+    }
     if res.verdict != "correct":
         update["retries"] = state.retries + 1
     return update

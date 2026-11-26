@@ -1,5 +1,6 @@
 """Types and state models shared by the main graph and the worker subgraph."""
 
+import operator
 from typing import Annotated, Literal
 
 from langchain_core.messages import AnyMessage
@@ -67,6 +68,11 @@ class WorkerState(WorkerOutput):
 class Check(BaseModel):
     verdict: Verdict
     feedback: str
+    good_steps: list[int] = Field(
+        default_factory=list,
+        description="IDs of steps whose results are correct and useful, even if the "
+        "draft answer is wrong. They are kept as known facts for the next attempt.",
+    )
 
 
 class AgentState(BaseModel):
@@ -88,6 +94,8 @@ class AgentState(BaseModel):
     step_results: Annotated[list[StepResult], results_reducer] = Field(
         default_factory=list
     )
+    # results the verifier marked good; kept across retries (step_results is reset)
+    known_facts: Annotated[list[str], operator.add] = Field(default_factory=list)
 
     # output
     draft_answer: str | None = None
