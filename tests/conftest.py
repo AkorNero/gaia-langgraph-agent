@@ -31,7 +31,7 @@ def _clear_caches() -> None:
 
 
 @pytest.fixture(autouse=True)
-def store(monkeypatch) -> memory.ResultStore:
+def store(monkeypatch) -> memory.ResultStore:  # ty: ignore[invalid-generator-return-type]
     """A fresh, empty STORE and empty caches for every test."""
     fresh = memory.ResultStore()
     monkeypatch.setattr(memory, "STORE", fresh)
