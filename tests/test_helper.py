@@ -189,7 +189,9 @@ def test_clean_table_flattens_multiindex_headers():
 
 
 def test_clean_table_removes_citations_from_headers_and_cells():
-    df = pd.DataFrame({"Album[1]": ["Foo[2]", "Bar[citation needed]"], "Year[a]": [1, 2]})
+    df = pd.DataFrame(
+        {"Album[1]": ["Foo[2]", "Bar[citation needed]"], "Year[a]": [1, 2]}
+    )
     out = clean_table(df)
     assert list(out.columns) == ["Album", "Year"]
     assert out["Album"].tolist() == ["Foo", "Bar"]

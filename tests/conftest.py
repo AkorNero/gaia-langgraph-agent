@@ -19,6 +19,8 @@ CACHED = (
     memory.cached_wiki_tables,
     memory.cached_web_search,
     memory.cached_fetch_page,
+    memory.cached_youtube_transcript,
+    memory.cached_transcription,
     helper.docker_available,
 )
 
@@ -29,7 +31,7 @@ def _clear_caches() -> None:
 
 
 @pytest.fixture(autouse=True)
-def store(monkeypatch) -> memory.ResultStore:
+def store(monkeypatch) -> memory.ResultStore:  # ty: ignore[invalid-generator-return-type]
     """A fresh, empty STORE and empty caches for every test."""
     fresh = memory.ResultStore()
     monkeypatch.setattr(memory, "STORE", fresh)
