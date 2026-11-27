@@ -19,6 +19,8 @@ CACHED = (
     memory.cached_wiki_tables,
     memory.cached_web_search,
     memory.cached_fetch_page,
+    memory.cached_youtube_transcript,
+    memory.cached_transcription,
     helper.docker_available,
 )
 

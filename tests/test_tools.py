@@ -8,6 +8,7 @@ import pytest
 import requests
 from wikipedia.exceptions import DisambiguationError, PageError
 
+import memory
 import tools
 from tools import (
     fetch_page,
@@ -35,12 +36,13 @@ def raises(exc):
 def test_search_web_formats_and_truncates_snippets(monkeypatch):
     long = "s" * (SNIPPET_CHARS + 10)
     monkeypatch.setattr(
-        tools, "cached_web_search", lambda q: (("T1", "u1", "short"), ("T2", "u2", long))
+        tools,
+        "cached_web_search",
+        lambda q: (("T1", "u1", "short"), ("T2", "u2", long)),
     )
     out = search_web.invoke({"query": "q"})
     assert out == (
-        "1. T1\n   URL: u1\n   short\n\n"
-        f"2. T2\n   URL: u2\n   {'s' * SNIPPET_CHARS}..."
+        f"1. T1\n   URL: u1\n   short\n\n2. T2\n   URL: u2\n   {'s' * SNIPPET_CHARS}..."
     )
 
 
@@ -84,7 +86,9 @@ WIKI = "Sosa was a singer.\n\n== Life ==\nBorn 1935.\n\n== Discography ==\nAlbum
 
 
 def test_search_wiki_returns_intro_and_sections(monkeypatch, store):
-    monkeypatch.setattr(tools, "cached_wiki_search", lambda q: ("Mercedes Sosa", "Other"))
+    monkeypatch.setattr(
+        tools, "cached_wiki_search", lambda q: ("Mercedes Sosa", "Other")
+    )
     monkeypatch.setattr(tools, "cached_wiki_page", lambda t: (t, "http://w/MS", WIKI))
     out = search_wiki.invoke({"query": "sosa"})
     assert store.get("wiki:Mercedes Sosa") == WIKI
@@ -102,7 +106,9 @@ def test_search_wiki_no_results(monkeypatch):
 def test_search_wiki_disambiguation(monkeypatch):
     monkeypatch.setattr(tools, "cached_wiki_search", lambda q: ("Mercury",))
     monkeypatch.setattr(
-        tools, "cached_wiki_page", raises(DisambiguationError("Mercury", ["Planet", "Element"]))
+        tools,
+        "cached_wiki_page",
+        raises(DisambiguationError("Mercury", ["Planet", "Element"])),
     )
     assert search_wiki.invoke({"query": "q"}) == (
         "'Mercury' is ambiguous. Options: ['Planet', 'Element']"
@@ -112,7 +118,9 @@ def test_search_wiki_disambiguation(monkeypatch):
 def test_search_wiki_page_not_found(monkeypatch):
     monkeypatch.setattr(tools, "cached_wiki_search", lambda q: ("A", "B"))
     monkeypatch.setattr(tools, "cached_wiki_page", raises(PageError("A")))
-    assert search_wiki.invoke({"query": "q"}) == "Page 'A' not found. Other results: ['B']"
+    assert (
+        search_wiki.invoke({"query": "q"}) == "Page 'A' not found. Other results: ['B']"
+    )
 
 
 def test_search_wiki_other_error(monkeypatch):
@@ -173,7 +181,9 @@ def test_wikipedia_tables_no_tables(monkeypatch):
 def test_wikipedia_tables_http_error(monkeypatch):
     resp = requests.Response()
     resp.status_code = 404
-    monkeypatch.setattr(tools, "cached_wiki_tables", raises(requests.HTTPError(response=resp)))
+    monkeypatch.setattr(
+        tools, "cached_wiki_tables", raises(requests.HTTPError(response=resp))
+    )
     assert wikipedia_tables.invoke({"title": "Nope"}).startswith(
         "ERROR: HTTP 404 for page 'Nope'"
     )
@@ -201,7 +211,9 @@ def test_read_stored_whole_text(store):
 
 def test_read_stored_section(store):
     store.put("k", WIKI)
-    assert read_stored.invoke({"key": "k", "section": "life"}) == "== Life ==\nBorn 1935."
+    assert (
+        read_stored.invoke({"key": "k", "section": "life"}) == "== Life ==\nBorn 1935."
+    )
 
 
 def test_read_stored_section_not_found(store):
@@ -243,9 +255,11 @@ def test_youtube_transcript_joins_and_stores(monkeypatch, store):
     class FakeApi:
         def fetch(self, video_id):
             assert video_id == "abc"
-            return SimpleNamespace(to_raw_data=lambda: [{"text": "hello"}, {"text": "world"}])
+            return SimpleNamespace(
+                to_raw_data=lambda: [{"text": "hello"}, {"text": "world"}]
+            )
 
-    monkeypatch.setattr(tools, "YouTubeTranscriptApi", FakeApi)
+    monkeypatch.setattr(memory, "YouTubeTranscriptApi", FakeApi)
     assert get_youtube_transcript.invoke({"video_id": "abc"}) == "hello world"
     assert store.get("yt:abc") == "hello world"
 
@@ -255,7 +269,7 @@ def test_youtube_transcript_error(monkeypatch):
         def fetch(self, video_id):
             raise LookupError("disabled")
 
-    monkeypatch.setattr(tools, "YouTubeTranscriptApi", FakeApi)
+    monkeypatch.setattr(memory, "YouTubeTranscriptApi", FakeApi)
     assert get_youtube_transcript.invoke({"video_id": "abc"}) == (
         "ERROR: no transcript available (LookupError)"
     )
@@ -271,8 +285,10 @@ def test_transcribe_audio_uses_whisper(monkeypatch, tmp_path):
         seen["model"], seen["data"] = model, file.read()
         return SimpleNamespace(text="spoken words")
 
-    fake = SimpleNamespace(audio=SimpleNamespace(transcriptions=SimpleNamespace(create=create)))
-    monkeypatch.setattr(tools, "client", fake)
+    fake = SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(memory, "client", fake)
     assert transcribe_audio.invoke({"file_path": str(audio)}) == "spoken words"
     assert seen == {"model": "whisper-1", "data": b"ID3"}
 
@@ -326,8 +342,12 @@ def runner(monkeypatch):
 
     def configure(result, docker=False):
         monkeypatch.setattr(tools, "docker_available", lambda: docker)
-        monkeypatch.setattr(tools, "run_in_docker", lambda code: used.append("docker") or result)
-        monkeypatch.setattr(tools, "run_local", lambda code: used.append("local") or result)
+        monkeypatch.setattr(
+            tools, "run_in_docker", lambda code: used.append("docker") or result
+        )
+        monkeypatch.setattr(
+            tools, "run_local", lambda code: used.append("local") or result
+        )
         return used
 
     return configure

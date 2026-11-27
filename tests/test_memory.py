@@ -143,7 +143,11 @@ def test_web_search_errors_raise_and_are_not_cached(monkeypatch, response, error
 # --- cached_fetch_page -----------------------------------------------------------
 def test_fetch_page_returns_title_and_cleaned_markdown(monkeypatch):
     fake = FakeTool(
-        {"results": [{"title": "Page", "raw_content": "Hi ![img](x.png) [link](http://a)"}]}
+        {
+            "results": [
+                {"title": "Page", "raw_content": "Hi ![img](x.png) [link](http://a)"}
+            ]
+        }
     )
     monkeypatch.setattr(memory, "web_extract", fake)
     assert cached_fetch_page("http://x") == ("Page", "Hi  link")
@@ -151,7 +155,9 @@ def test_fetch_page_returns_title_and_cleaned_markdown(monkeypatch):
 
 
 def test_fetch_page_title_falls_back_to_url(monkeypatch):
-    monkeypatch.setattr(memory, "web_extract", FakeTool({"results": [{"raw_content": None}]}))
+    monkeypatch.setattr(
+        memory, "web_extract", FakeTool({"results": [{"raw_content": None}]})
+    )
     assert cached_fetch_page("http://x") == ("http://x", "")
 
 
@@ -165,7 +171,9 @@ def test_fetch_page_failure_raises(monkeypatch):
 # --- Wikipedia -------------------------------------------------------------------
 def test_wiki_search_returns_tuple_of_top_3(monkeypatch):
     calls = []
-    monkeypatch.setattr(memory, "search", lambda q, n: calls.append((q, n)) or ["A", "B"])
+    monkeypatch.setattr(
+        memory, "search", lambda q, n: calls.append((q, n)) or ["A", "B"]
+    )
     assert cached_wiki_search("q") == ("A", "B")
     assert calls == [("q", 3)]
 
@@ -220,11 +228,15 @@ def test_wiki_tables_fetches_and_cleans(monkeypatch):
     "Fix: pd.read_html(..., flavor='lxml').",
 )
 def test_wiki_tables_no_tables(monkeypatch):
-    monkeypatch.setattr(memory.requests, "get", lambda *_, **__: FakeResponse("<p>none</p>"))
+    monkeypatch.setattr(
+        memory.requests, "get", lambda *_, **__: FakeResponse("<p>none</p>")
+    )
     assert cached_wiki_tables("X") == ()
 
 
 def test_wiki_tables_http_error_raises(monkeypatch):
-    monkeypatch.setattr(memory.requests, "get", lambda *_, **__: FakeResponse(status=404))
+    monkeypatch.setattr(
+        memory.requests, "get", lambda *_, **__: FakeResponse(status=404)
+    )
     with pytest.raises(requests.HTTPError):
         cached_wiki_tables("Nope")

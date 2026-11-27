@@ -1,0 +1,118 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write # to post the summary comment
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # adds -o pipefail, so `| tee` keeps the command's exit code
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+
+      - id: setup
+        run: uv sync --locked && mkdir -p logs
+
+      # Each check keeps going on failure so every result lands in the summary;
+      # the last step fails the job if any of them failed.
+      - id: lint
+        continue-on-error: true
+        run: uvx ruff check . 2>&1 | tee logs/lint.log
+      - id: format
+        continue-on-error: true
+        run: uvx ruff format --check . 2>&1 | tee logs/format.log
+      - id: typecheck
+        continue-on-error: true
+        run: uvx ty check 2>&1 | tee logs/typecheck.log
+      - id: tests
+        continue-on-error: true
+        run: uv run pytest -q 2>&1 | tee logs/tests.log
+      - id: audit # dependency CVE scan
+        continue-on-error: true
+        run: |
+          uv export --no-hashes -o /tmp/req.txt
+          uvx pip-audit -r /tmp/req.txt 2>&1 | tee logs/audit.log
+
+      - id: summary
+        name: Build summary
+        if: always()
+        env:
+          SETUP: ${{ steps.setup.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          FORMAT: ${{ steps.format.outcome }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          checks=(
+            "setup|Install (uv sync)|$SETUP"
+            "lint|Lint (ruff check)|$LINT"
+            "format|Format (ruff format)|$FORMAT"
+            "typecheck|Typecheck (ty)|$TYPECHECK"
+            "tests|Tests (pytest)|$TESTS"
+            "audit|Dependency audit (pip-audit)|$AUDIT"
+          )
+          failed=0
+          rows="" details=""
+          for c in "${checks[@]}"; do
+            IFS='|' read -r id name outcome <<< "$c"
+            case "$outcome" in
+              success) result="✅ pass" ;;
+              failure) result="❌ fail"; failed=$((failed + 1)) ;;
+              *)       result="⏭️ ${outcome:-skipped}" ;;
+            esac
+            rows+="| $name | $result |"$'\n'
+            if [ "$outcome" = failure ] && [ -s "logs/$id.log" ]; then
+              details+="<details><summary>$name: last 40 lines</summary>"$'\n\n'
+              details+='```text'$'\n'"$(tail -n 40 "logs/$id.log")"$'\n''```'$'\n\n'
+              details+="</details>"$'\n\n'
+            fi
+          done
+          if [ "$failed" -eq 0 ]; then headline="✅ All checks passed"
+          else headline="❌ $failed check(s) failed"; fi
+          {
+            echo "<!-- ci-summary -->"
+            echo "## CI: $headline"
+            echo
+            echo "| Check | Result |"
+            echo "|---|---|"
+            printf '%s' "$rows"
+            echo
+            printf '%s' "$details"
+            echo "Commit \`${SHA::7}\` · [full logs]($RUN_URL)"
+          } > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      # Skipped for PRs from forks: they get a read-only token and can't comment.
+      # Their summary is still on the run page.
+      - name: Comment on PR
+        if: >-
+          always() && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Update the earlier summary comment instead of adding one per push.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+                 --jq '.[] | select(.body | startswith("<!-- ci-summary -->")) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@summary.md > /dev/null
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file summary.md
+          fi
+
+      - name: Fail if any check failed
+        if: always() && (steps.setup.outcome != 'success' || steps.summary.outputs.failed != '0')
+        run: exit 1

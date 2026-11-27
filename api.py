@@ -14,13 +14,13 @@ api_endpoint: str = str(os.getenv("HF_ASSESMENT_API_ENDPOINT"))
 
 
 class Question(BaseModel):
-  task_id: str
-  question: str = Field(alias="Question")
-  level: str = Field(alias="Level")
-  file_name: str  # empty string when there's no attachment
-  file_path: str  # empty string when there's no attachment
-  final_answer: str = Field(alias="Final answer")
-  annotator_metadata: dict[str, str] = Field(alias="Annotator Metadata")
+    task_id: str
+    question: str = Field(alias="Question")
+    level: str = Field(alias="Level")
+    file_name: str  # empty string when there's no attachment
+    file_path: str  # empty string when there's no attachment
+    final_answer: str = Field(alias="Final answer")
+    annotator_metadata: dict[str, str] = Field(alias="Annotator Metadata")
 
 
 # class Answer(BaseModel):
@@ -41,26 +41,26 @@ class Question(BaseModel):
 
 
 def get_questions() -> list[Question]:
-  res = requests.get(f"{api_endpoint}/questions", timeout=30)
-  res.raise_for_status()
+    res = requests.get(f"{api_endpoint}/questions", timeout=30)
+    res.raise_for_status()
 
-  task_ids = {q["task_id"] for q in res.json()}
+    task_ids = {q["task_id"] for q in res.json()}
 
-  # data_dir = snapshot_download(
-  #   repo_id="gaia-benchmark/GAIA",
-  #   repo_type="dataset",
-  #   token=token,
-  # )
+    # data_dir = snapshot_download(
+    #   repo_id="gaia-benchmark/GAIA",
+    #   repo_type="dataset",
+    #   token=token,
+    # )
 
-  ds = load_dataset(
-    "gaia-benchmark/GAIA",
-    "2023_level1",
-    split="validation",
-    token=token,
-  )
+    ds = load_dataset(
+        "gaia-benchmark/GAIA",
+        "2023_level1",
+        split="validation",
+        token=token,
+    )
 
-  with_files = ds.filter(lambda r: r["task_id"] in task_ids)
+    with_files = ds.filter(lambda r: r["task_id"] in task_ids)
 
-  with_files.to_csv("data.csv")
+    with_files.to_csv("data.csv")
 
-  return [Question(**q) for q in with_files.to_list()]
+    return [Question(**q) for q in with_files.to_list()]

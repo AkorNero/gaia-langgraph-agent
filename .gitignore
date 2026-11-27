@@ -9,3 +9,5 @@ data.csv
 .ruff_cache
 
 .langgraph_api
+
+.pytest_cache
